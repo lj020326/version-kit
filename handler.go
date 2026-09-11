@@ -24,7 +24,52 @@ type HandlerConfig struct {
 
 	// HeaderPrefix is the prefix for version headers.
 	// Default: "X-"
+	//
+	// An invalid prefix (one containing characters that cannot appear in an
+	// HTTP header name) falls back to "X-" rather than emitting a malformed
+	// header name.
 	HeaderPrefix string
+
+	// IncludeBuildDetails serves the full Info -- Go runtime version, commit,
+	// build date, platform and compiler.
+	//
+	// Default: false. This endpoint is usually unauthenticated, and
+	// go_version lets anyone match a published Go runtime CVE to the exact
+	// build serving them. Turn it on for an internal endpoint, or behind
+	// authentication.
+	IncludeBuildDetails bool
+}
+
+// validHeaderPrefix reports whether prefix can appear in an HTTP header name.
+func validHeaderPrefix(prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	for _, r := range prefix {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// payload returns the Info to serve, reduced unless build details were asked for.
+func (c HandlerConfig) payload() *Info {
+	if c.IncludeBuildDetails {
+		return c.Info
+	}
+	return c.Info.Public()
+}
+
+// textPayload is payload rendered for the plain-text handlers.
+func (c HandlerConfig) textPayload() string {
+	if c.IncludeBuildDetails {
+		return c.Info.Full()
+	}
+	return c.Info.Public().Full()
 }
 
 // DefaultHandlerConfig returns a HandlerConfig with default values.
@@ -48,7 +93,7 @@ func Handler(config ...HandlerConfig) http.HandlerFunc {
 		cfg.Info = Default()
 	}
 
-	if cfg.HeaderPrefix == "" {
+	if !validHeaderPrefix(cfg.HeaderPrefix) {
 		cfg.HeaderPrefix = "X-"
 	}
 
@@ -63,9 +108,9 @@ func Handler(config ...HandlerConfig) http.HandlerFunc {
 		var err error
 
 		if cfg.Pretty {
-			output, err = json.MarshalIndent(cfg.Info, "", "  ")
+			output, err = json.MarshalIndent(cfg.payload(), "", "  ")
 		} else {
-			output, err = json.Marshal(cfg.Info)
+			output, err = json.Marshal(cfg.payload())
 		}
 
 		if err != nil {
@@ -89,7 +134,7 @@ func FiberHandler(config ...HandlerConfig) fiber.Handler {
 		cfg.Info = Default()
 	}
 
-	if cfg.HeaderPrefix == "" {
+	if !validHeaderPrefix(cfg.HeaderPrefix) {
 		cfg.HeaderPrefix = "X-"
 	}
 
@@ -101,10 +146,10 @@ func FiberHandler(config ...HandlerConfig) fiber.Handler {
 		}
 
 		if cfg.Pretty {
-			return c.JSON(cfg.Info)
+			return c.JSON(cfg.payload())
 		}
 
-		return c.JSON(cfg.Info)
+		return c.JSON(cfg.payload())
 	}
 }
 
@@ -212,7 +257,7 @@ func TextHandler(config ...HandlerConfig) http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(cfg.Info.Full()))
+		_, _ = w.Write([]byte(cfg.textPayload()))
 	}
 }
 
@@ -234,7 +279,7 @@ func FiberTextHandler(config ...HandlerConfig) fiber.Handler {
 			setVersionHeadersFiber(c, cfg.Info, cfg.HeaderPrefix)
 		}
 
-		return c.SendString(cfg.Info.Full())
+		return c.SendString(cfg.textPayload())
 	}
 }
 

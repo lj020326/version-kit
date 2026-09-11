@@ -75,6 +75,23 @@ func Default() *Info {
 	return NewWithBranch(Version, Commit, BuildDate, Branch)
 }
 
+// Public returns a copy of i carrying only the fields that are safe to expose
+// on an unauthenticated endpoint: the version, and the branch when one is set.
+//
+// GoVersion in particular lets anyone match a published Go runtime CVE to the
+// exact build serving them, and Commit, BuildDate, Platform and Compiler
+// narrow it further. None of that is a vulnerability on its own; it is
+// reconnaissance that costs nothing to withhold.
+func (i *Info) Public() *Info {
+	if i == nil {
+		return nil
+	}
+	return &Info{
+		Version: i.Version,
+		Branch:  i.Branch,
+	}
+}
+
 // String returns a human-readable version string.
 func (i *Info) String() string {
 	if i.Commit != "" && i.Commit != "unknown" {
@@ -103,9 +120,17 @@ func (i *Info) Full() string {
 		result += fmt.Sprintf("Built:      %s\n", i.BuildDate)
 	}
 
-	result += fmt.Sprintf("Go version: %s\n", i.GoVersion)
-	result += fmt.Sprintf("Platform:   %s\n", i.Platform)
-	result += fmt.Sprintf("Compiler:   %s\n", i.Compiler)
+	// Skip fields that were not populated, so a reduced Info (see Public)
+	// renders without a run of empty labels.
+	if i.GoVersion != "" {
+		result += fmt.Sprintf("Go version: %s\n", i.GoVersion)
+	}
+	if i.Platform != "" {
+		result += fmt.Sprintf("Platform:   %s\n", i.Platform)
+	}
+	if i.Compiler != "" {
+		result += fmt.Sprintf("Compiler:   %s\n", i.Compiler)
+	}
 
 	return result
 }
