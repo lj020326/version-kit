@@ -283,9 +283,10 @@ Use `DefaultHandlerConfig()` to get a config with default values when you only w
 ```go
 type HandlerConfig struct {
     Info           *Info   // Version info (default: Default())
-    Pretty         bool    // Pretty-print JSON (default: false)
-    IncludeHeaders bool    // Add version headers (default: false)
-    HeaderPrefix   string  // Header prefix (default: "X-")
+    Pretty              bool   // Pretty-print JSON (default: false)
+    IncludeHeaders      bool   // Add version headers (default: false)
+    HeaderPrefix        string // Header prefix (default: "X-")
+    IncludeBuildDetails bool   // Serve the full Info (default: false)
 }
 ```
 
@@ -340,3 +341,32 @@ go tool cover -html=coverage.out
 ## License
 
 Apache License 2.0
+
+### Build Details
+
+`IncludeBuildDetails` is **false by default**, so the endpoint serves only
+`version` and `branch`:
+
+```json
+{"version":"1.2.3","branch":"main"}
+```
+
+This endpoint is usually unauthenticated, and `go_version` lets anyone match a
+published Go runtime CVE to the exact build serving them, while the commit and
+build date fingerprint your deployment. Turn it on for an internal endpoint, or
+behind authentication, to get the full response back:
+
+```go
+version.Handler(version.HandlerConfig{
+    Info:                version.Get(),
+    IncludeBuildDetails: true,
+})
+```
+
+```json
+{"version":"1.2.3","branch":"main","commit":"abc1234","build_date":"2026-01-02T03:04:05Z","go_version":"go1.27.0",...}
+```
+
+The same flag gates the `X-*-Commit` and `X-*-Build-Date` response headers, so
+`IncludeHeaders` alone does not expose them.
+
