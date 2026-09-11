@@ -131,3 +131,108 @@ func TestPublicKeepsOnlySafeFields(t *testing.T) {
 		t.Error("Public() on nil should return nil")
 	}
 }
+
+// --- Codex review follow-ups (PR #4) ---
+
+// TestHeadersHonourIncludeBuildDetails is the regression test for headers being
+// built from cfg.Info instead of the payload actually served: an endpoint with
+// IncludeHeaders on but IncludeBuildDetails off still emitted the commit and
+// build date, so the build fingerprint leaked through the header path.
+func TestHeadersHonourIncludeBuildDetails(t *testing.T) {
+	info := &Info{
+		Version:   "1.2.3",
+		Branch:    "main",
+		Commit:    "abcdef1234567890",
+		BuildDate: "2026-01-02T03:04:05Z",
+		GoVersion: "go1.27.0",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		handler func(HandlerConfig) http.HandlerFunc
+	}{
+		{"json", func(c HandlerConfig) http.HandlerFunc { return Handler(c) }},
+		{"text", func(c HandlerConfig) http.HandlerFunc { return TextHandler(c) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := tc.handler(HandlerConfig{Info: info, IncludeHeaders: true, HeaderPrefix: "X-"})
+			rec := httptest.NewRecorder()
+			h(rec, httptest.NewRequest(http.MethodGet, "/version", nil))
+
+			if got := rec.Header().Get("X-Commit"); got != "" {
+				t.Errorf("X-Commit leaked without IncludeBuildDetails: %q", got)
+			}
+			if got := rec.Header().Get("X-Build-Date"); got != "" {
+				t.Errorf("X-Build-Date leaked without IncludeBuildDetails: %q", got)
+			}
+			if got := rec.Header().Get("X-Version"); got != "1.2.3" {
+				t.Errorf("X-Version = %q, want 1.2.3", got)
+			}
+			if got := rec.Header().Get("X-Branch"); got != "main" {
+				t.Errorf("X-Branch = %q, want main", got)
+			}
+		})
+	}
+
+	t.Run("opted in", func(t *testing.T) {
+		h := Handler(HandlerConfig{Info: info, IncludeHeaders: true, HeaderPrefix: "X-", IncludeBuildDetails: true})
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest(http.MethodGet, "/version", nil))
+
+		if got := rec.Header().Get("X-Commit"); got != "abcdef1" {
+			t.Errorf("X-Commit = %q, want abcdef1", got)
+		}
+		if got := rec.Header().Get("X-Build-Date"); got == "" {
+			t.Error("X-Build-Date missing with IncludeBuildDetails")
+		}
+	})
+}
+
+// TestValidHeaderPrefixAcceptsTokenChars covers prefixes that are valid HTTP
+// tokens but were rejected by the alphanumeric-and-dash-only check, which
+// silently rewrote a caller's configured prefix to "X-".
+func TestValidHeaderPrefixAcceptsTokenChars(t *testing.T) {
+	valid := []string{"X-", "X.App-", "App_", "a~b+", "x^y-", "My!App-", "v1.2-"}
+	for _, p := range valid {
+		if !validHeaderPrefix(p) {
+			t.Errorf("validHeaderPrefix(%q) = false, want true (all tchars)", p)
+		}
+	}
+
+	invalid := []string{"", "X ", "X:", "X-\n", "X(", "X\"", "X@", "X/"}
+	for _, p := range invalid {
+		if validHeaderPrefix(p) {
+			t.Errorf("validHeaderPrefix(%q) = true, want false (not a token)", p)
+		}
+	}
+
+	// A valid, unusual prefix must survive into the emitted header name.
+	h := Handler(HandlerConfig{Info: &Info{Version: "9.9.9"}, IncludeHeaders: true, HeaderPrefix: "X.App-"})
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/version", nil))
+	if got := rec.Header().Get("X.App-Version"); got != "9.9.9" {
+		t.Errorf("X.App-Version = %q, want 9.9.9 (prefix was rewritten)", got)
+	}
+}
+
+// TestTextHandlersNormalizeHeaderPrefix is the regression test for the text
+// handlers skipping validHeaderPrefix: an invalid prefix reached the header
+// setter instead of falling back to "X-" the way Handler documents.
+func TestTextHandlersNormalizeHeaderPrefix(t *testing.T) {
+	h := TextHandler(HandlerConfig{
+		Info:           &Info{Version: "4.5.6"},
+		IncludeHeaders: true,
+		HeaderPrefix:   "bad prefix:",
+	})
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/version", nil))
+
+	if got := rec.Header().Get("X-Version"); got != "4.5.6" {
+		t.Errorf("X-Version = %q, want 4.5.6 (invalid prefix was not normalized)", got)
+	}
+	for name := range rec.Header() {
+		if strings.Contains(name, " ") || strings.Contains(name, ":") {
+			t.Errorf("malformed header name reached the response: %q", name)
+		}
+	}
+}

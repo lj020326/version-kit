@@ -41,6 +41,10 @@ type HandlerConfig struct {
 }
 
 // validHeaderPrefix reports whether prefix can appear in an HTTP header name.
+//
+// A field name is a token (RFC 9110 5.6.2), so every tchar is allowed here --
+// not just the alphanumeric/dash subset. Prefixes such as "X.App-" were valid
+// before this validator existed and must keep working.
 func validHeaderPrefix(prefix string) bool {
 	if prefix == "" {
 		return false
@@ -48,12 +52,20 @@ func validHeaderPrefix(prefix string) bool {
 	for _, r := range prefix {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '-', r == '_':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", r):
 		default:
 			return false
 		}
 	}
 	return true
+}
+
+// normalizeHeaderPrefix falls back to "X-" for a prefix that is not a token.
+func normalizeHeaderPrefix(prefix string) string {
+	if validHeaderPrefix(prefix) {
+		return prefix
+	}
+	return "X-"
 }
 
 // payload returns the Info to serve, reduced unless build details were asked for.
@@ -93,15 +105,13 @@ func Handler(config ...HandlerConfig) http.HandlerFunc {
 		cfg.Info = Default()
 	}
 
-	if !validHeaderPrefix(cfg.HeaderPrefix) {
-		cfg.HeaderPrefix = "X-"
-	}
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if cfg.IncludeHeaders {
-			setVersionHeaders(w.Header(), cfg.Info, cfg.HeaderPrefix)
+			setVersionHeaders(w.Header(), cfg.payload(), cfg.HeaderPrefix)
 		}
 
 		var output []byte
@@ -134,15 +144,13 @@ func FiberHandler(config ...HandlerConfig) fiber.Handler {
 		cfg.Info = Default()
 	}
 
-	if !validHeaderPrefix(cfg.HeaderPrefix) {
-		cfg.HeaderPrefix = "X-"
-	}
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
 
 	return func(c fiber.Ctx) error {
 		c.Set("Content-Type", "application/json")
 
 		if cfg.IncludeHeaders {
-			setVersionHeadersFiber(c, cfg.Info, cfg.HeaderPrefix)
+			setVersionHeadersFiber(c, cfg.payload(), cfg.HeaderPrefix)
 		}
 
 		if cfg.Pretty {
@@ -249,11 +257,13 @@ func TextHandler(config ...HandlerConfig) http.HandlerFunc {
 		cfg.Info = Default()
 	}
 
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 		if cfg.IncludeHeaders {
-			setVersionHeaders(w.Header(), cfg.Info, cfg.HeaderPrefix)
+			setVersionHeaders(w.Header(), cfg.payload(), cfg.HeaderPrefix)
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -272,11 +282,13 @@ func FiberTextHandler(config ...HandlerConfig) fiber.Handler {
 		cfg.Info = Default()
 	}
 
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
+
 	return func(c fiber.Ctx) error {
 		c.Set("Content-Type", "text/plain; charset=utf-8")
 
 		if cfg.IncludeHeaders {
-			setVersionHeadersFiber(c, cfg.Info, cfg.HeaderPrefix)
+			setVersionHeadersFiber(c, cfg.payload(), cfg.HeaderPrefix)
 		}
 
 		return c.SendString(cfg.textPayload())
