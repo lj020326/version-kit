@@ -236,3 +236,50 @@ func TestTextHandlersNormalizeHeaderPrefix(t *testing.T) {
 		}
 	}
 }
+
+// --- Codex review round 3 (PR #4) ---
+
+// TestDocumentedBuildDetailsExampleCompiles pins the READMEs' build-details
+// example to the actual API. Both guides called version.Get(), which does not
+// exist -- the package-level constructor for ldflag-backed information is
+// Default() -- so the one example a reader would copy to turn the full
+// response back on did not compile.
+func TestDocumentedBuildDetailsExampleCompiles(t *testing.T) {
+	h := Handler(HandlerConfig{
+		Info:                Default(),
+		IncludeBuildDetails: true,
+	})
+
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/version", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	// The documented point of the flag: the build fingerprint comes back.
+	for _, field := range []string{"version", "commit", "build_date", "go_version"} {
+		if _, ok := payload[field]; !ok {
+			t.Errorf("field %q missing; IncludeBuildDetails must serve the full Info", field)
+		}
+	}
+
+	// And the documented default keeps them out.
+	def := Handler(HandlerConfig{Info: Default()})
+	rec2 := httptest.NewRecorder()
+	def(rec2, httptest.NewRequest(http.MethodGet, "/version", nil))
+
+	var bare map[string]any
+	if err := json.Unmarshal(rec2.Body.Bytes(), &bare); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"commit", "build_date", "go_version"} {
+		if _, ok := bare[field]; ok {
+			t.Errorf("field %q served by default; the READMEs promise only version and branch", field)
+		}
+	}
+}

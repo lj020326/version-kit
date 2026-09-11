@@ -282,10 +282,11 @@ version.RegisterEndpoint(mux, "/version", version.HandlerConfig{
 
 ```go
 type HandlerConfig struct {
-    Info           *Info   // 版本信息 (默认: Default())
-    Pretty         bool    // 格式化 JSON 输出 (默认: false)
-    IncludeHeaders bool    // 添加版本头信息 (默认: false)
-    HeaderPrefix   string  // 头信息前缀 (默认: "X-")
+    Info                *Info  // 版本信息 (默认: Default())
+    Pretty              bool   // 格式化 JSON 输出 (默认: false)
+    IncludeHeaders      bool   // 添加版本头信息 (默认: false)
+    HeaderPrefix        string // 头信息前缀 (默认: "X-")
+    IncludeBuildDetails bool   // 返回完整 Info (默认: false)
 }
 ```
 
@@ -303,6 +304,9 @@ var (
 ```
 
 ## 响应示例
+
+以下是**完整**响应，需要设置 `IncludeBuildDetails: true`。
+默认情况下端点只返回 `version` 和 `branch`，详见[构建详情](#构建详情)。
 
 ### JSON 端点
 
@@ -330,6 +334,32 @@ Platform:   linux/amd64
 Compiler:   gc
 ```
 
+## 构建详情
+
+`IncludeBuildDetails` **默认为 false**，因此端点只返回 `version` 和 `branch`：
+
+```json
+{"version":"1.2.3","branch":"main"}
+```
+
+这个端点通常是不需要认证的，而 `go_version` 会让任何人把已公开的 Go 运行时 CVE
+精确对应到正在服务的这个构建上，commit 与构建时间则等于给部署留下指纹。
+仅在内部端点、或已有认证保护的端点上开启它，以取回完整响应：
+
+```go
+version.Handler(version.HandlerConfig{
+    Info:                version.Default(),
+    IncludeBuildDetails: true,
+})
+```
+
+```json
+{"version":"1.2.3","branch":"main","commit":"abc1234","build_date":"2026-01-02T03:04:05Z","go_version":"go1.27.0",...}
+```
+
+同一个开关也控制 `X-*-Commit` 与 `X-*-Build-Date` 响应头，因此单独开启
+`IncludeHeaders` 并不会暴露它们。
+
 ## 测试
 
 ```bash
@@ -355,7 +385,7 @@ Apache License 2.0
 
 ```go
 version.Handler(version.HandlerConfig{
-    Info:                version.Get(),
+    Info:                version.Default(),
     IncludeBuildDetails: true,
 })
 ```

@@ -305,6 +305,10 @@ var (
 
 ## Example Response
 
+These show the **full** response, which needs `IncludeBuildDetails: true`.
+By default the endpoint serves only `version` and `branch` -- see
+[Build Details](#build-details).
+
 ### JSON Endpoint
 
 ```json
@@ -338,11 +342,7 @@ go test -v -race -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
-## License
-
-Apache License 2.0
-
-### Build Details
+## Build Details
 
 `IncludeBuildDetails` is **false by default**, so the endpoint serves only
 `version` and `branch`:
@@ -358,7 +358,7 @@ behind authentication, to get the full response back:
 
 ```go
 version.Handler(version.HandlerConfig{
-    Info:                version.Get(),
+    Info:                version.Default(),
     IncludeBuildDetails: true,
 })
 ```
@@ -370,3 +370,6 @@ version.Handler(version.HandlerConfig{
 The same flag gates the `X-*-Commit` and `X-*-Build-Date` response headers, so
 `IncludeHeaders` alone does not expose them.
 
+## License
+
+Apache License 2.0
