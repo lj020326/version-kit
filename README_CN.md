@@ -20,7 +20,7 @@
 
 ## 运行要求
 
-- **Go 1.26+**，用于构建与运行。
+- **Go 1.27+**，用于构建与运行（`go.mod` 声明 `go 1.27.0`）。
 - Fiber API（`FiberHandler`、`FiberMiddleware` 等）要求 Fiber v3.4.0 或更高版本。
 
 此 v2 模块版本面向 Fiber v3。仍使用 Fiber v2 的应用应继续使用 `github.com/soulteary/version-kit` v1。
@@ -295,6 +295,7 @@ version.RegisterEndpoint(mux, "/version", version.HandlerConfig{
 | `IsDev()` | 如果版本是 "dev" 或空则返回 true |
 | `BuildTimestamp()` | 解析构建日期为 time.Time |
 | `ShortCommit()` | 返回提交哈希的前 7 个字符 |
+| `Public()` | 返回一个副本，只保留适合在未认证端点暴露的字段：版本号，以及已设置时的分支名 |
 
 ### HandlerConfig 选项
 
@@ -380,12 +381,48 @@ version.Handler(version.HandlerConfig{
 同一个开关也控制 `X-*-Commit` 与 `X-*-Build-Date` 响应头，因此单独开启
 `IncludeHeaders` 并不会暴露它们。
 
+要自己拼响应？`Info.Public()` 会返回这个精简副本：
+
+```go
+json.NewEncoder(w).Encode(version.Default().Public())
+```
+
+当 `Go version:`、`Platform:`、`Compiler:` 这些字段未设置时，`Full()` 会跳过对应的标签，
+因此精简后的 `Info` 渲染出来不会带一串空行。
+
+### 头前缀
+
+`HeaderPrefix` 会被拼进 header **名称**里，因此含空格、冒号或换行的前缀会产出一个畸形的
+header。非法前缀会回退为 `"X-"`。
+
 ## 测试
 
 ```bash
 go test -v -race -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
+
+## 升级说明（v2.2.0）
+
+**端点的默认响应变小了。** 这正是本次修复，也是升级前唯一需要确认的一点。
+
+- **构建详情默认不再暴露。** `Handler`、`FiberHandler`、`TextHandler` 以及版本头中间件
+  此前会输出完整的 `Info`——Go 运行时版本、commit、构建时间、平台和编译器。这个端点通常
+  没有认证，而 `Middleware` 会把同样的数据放在**每一个响应**上，于是 `go_version` 让任何
+  人都能把一个已公开的 Go 运行时 CVE 对应到正在服务他们的那个具体构建，commit 和构建时间
+  进一步收窄范围。现在默认响应是 `{"version":…,"branch":…}`。**如果你的工具链会从
+  `/version` 解析 `commit`、`build_date` 或 `go_version`，请设置
+  `IncludeBuildDetails: true`**，并把该端点放到认证之后或内部路由上。
+- **新增 `MiddlewareWithConfig` 和 `FiberMiddlewareWithConfig`。**
+  `Middleware(info, prefix)` 签名不变，现在只输出公开头；要把 `X-Commit` 和
+  `X-Build-Date` 拿回来，请使用带 `IncludeBuildDetails` 的 `WithConfig` 形式。
+- **新增 `Info.Public()`**，供自己拼响应的调用方使用。
+- **`Full()` 会跳过未设置的字段。** 它此前无条件输出 `Go version:`、`Platform:` 和
+  `Compiler:` 标签，于是精简后的 `Info` 渲染出来带着一串空行。`Commit`、`Branch` 和
+  `BuildDate` 本来就是这样处理的。
+- **非法的 `HeaderPrefix` 回退为 `"X-"`。** 它此前只做了空字符串检查就被拼进 header
+  名称，于是含空格、冒号或换行的前缀会产出畸形 header。
+- **运行要求里写的是 Go 1.26**；`go.mod` 需要 `1.27.0`。
 
 ## 许可证
 

@@ -20,7 +20,7 @@ A version information management toolkit for Go applications. Provides structure
 
 ## Requirements
 
-- **Go 1.26+** for building and running.
+- **Go 1.27+** for building and running (`go.mod` declares `go 1.27.0`).
 - Fiber APIs (`FiberHandler`, `FiberMiddleware`, etc.) require Fiber v3.4.0 or later.
 
 This v2 module line targets Fiber v3. Applications that still use Fiber v2 should remain on `github.com/soulteary/version-kit` v1.
@@ -296,6 +296,7 @@ version.RegisterEndpoint(mux, "/version", version.HandlerConfig{
 | `IsDev()` | Returns true if version is "dev" or empty |
 | `BuildTimestamp()` | Parses build date as time.Time |
 | `ShortCommit()` | Returns first 7 characters of commit |
+| `Public()` | A copy carrying only the fields safe for an unauthenticated endpoint: the version, and the branch when set |
 
 ### HandlerConfig Options
 
@@ -390,6 +391,49 @@ version.Handler(version.HandlerConfig{
 
 The same flag gates the `X-*-Commit` and `X-*-Build-Date` response headers, so
 `IncludeHeaders` alone does not expose them.
+
+Building your own response? `Info.Public()` returns the reduced copy:
+
+```go
+json.NewEncoder(w).Encode(version.Default().Public())
+```
+
+`Full()` skips the `Go version:`, `Platform:` and `Compiler:` labels when those
+fields are unset, so a reduced `Info` renders without a run of empty lines.
+
+### Header prefix
+
+`HeaderPrefix` is concatenated into a header **name**, so a prefix containing a
+space, colon or newline would produce a malformed header. An invalid prefix falls
+back to `"X-"`.
+
+## Upgrade Notes (v2.2.0)
+
+**The default endpoint response is smaller.** That is the fix, and it is the one
+thing to check before upgrading.
+
+- **Build details are withheld by default.** `Handler`, `FiberHandler`,
+  `TextHandler` and the version-header middleware served the full `Info` — Go
+  runtime version, commit, build date, platform and compiler. The endpoint is
+  usually unauthenticated, and `Middleware` put the same data on **every
+  response**, so `go_version` let anyone match a published Go runtime CVE to the
+  exact build serving them, with the commit and build date narrowing it further.
+  The default response is now `{"version":…,"branch":…}`. **If your tooling parses
+  `commit`, `build_date` or `go_version` from `/version`, set
+  `IncludeBuildDetails: true`** and put that endpoint behind authentication or on
+  an internal route.
+- **`MiddlewareWithConfig` and `FiberMiddlewareWithConfig` are new.**
+  `Middleware(info, prefix)` keeps its signature and now emits only the public
+  headers; use the `WithConfig` forms with `IncludeBuildDetails` to get
+  `X-Commit` and `X-Build-Date` back.
+- **`Info.Public()` is new**, for callers building their own response.
+- **`Full()` skips unset fields.** It emitted `Go version:`, `Platform:` and
+  `Compiler:` labels unconditionally, so a reduced `Info` rendered with a run of
+  empty lines. `Commit`, `Branch` and `BuildDate` were already handled this way.
+- **An invalid `HeaderPrefix` falls back to `"X-"`.** It was concatenated into a
+  header name with only an empty-string check, so a prefix containing a space,
+  colon or newline produced a malformed header.
+- **Requirements said Go 1.26**; `go.mod` requires `1.27.0`.
 
 ## License
 
