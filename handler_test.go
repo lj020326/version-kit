@@ -184,7 +184,8 @@ func TestSimpleHandler(t *testing.T) {
 
 func TestMiddleware(t *testing.T) {
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
-	middleware := Middleware(info, "X-")
+	// The commit header is the opt-in form now; Middleware alone is public-only.
+	middleware := MiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: "X-", IncludeBuildDetails: true})
 
 	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -348,7 +349,7 @@ func TestFiberMiddleware(t *testing.T) {
 	app := fiber.New()
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
 
-	app.Use(FiberMiddleware(info, "X-"))
+	app.Use(FiberMiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: "X-", IncludeBuildDetails: true}))
 	app.Get("/", func(c fiber.Ctx) error {
 		return c.SendString("OK")
 	})

@@ -185,12 +185,25 @@ func main() {
     
     // 所有响应将包含:
     // X-Version: 1.0.0
-    // X-Commit: abc123
-    // X-Build-Date: 2025-01-01T00:00:00Z
+    // X-Branch:  main     (设置了分支时)
     
     http.ListenAndServe(":8080", wrapped)
 }
 ```
+
+这些响应头会出现在**每一个**响应上，因此 `Middleware` 只输出公开字段。
+与处理器一致，`X-Commit` 与 `X-Build-Date` 需要显式开启：
+
+```go
+wrapped := version.MiddlewareWithConfig(version.HandlerConfig{
+    Info:                info,
+    HeaderPrefix:        "X-",
+    IncludeBuildDetails: true, // 增加 X-Commit 与 X-Build-Date
+})(handler)
+```
+
+请只在内部路由或鉴权之后开启：提交号与构建时间足以让任何人把已公开的
+CVE 对应到正在为其服务的具体构建。
 
 Fiber 版本:
 
@@ -207,7 +220,10 @@ func main() {
     
     app := fiber.New()
     
-    // 为所有响应添加版本头信息
+    // 为所有响应添加公开版本响应头。
+    // 需要 X-Commit / X-Build-Date 时改用：
+    //   version.FiberMiddlewareWithConfig(version.HandlerConfig{
+    //       Info: info, HeaderPrefix: "X-", IncludeBuildDetails: true})
     app.Use(version.FiberMiddleware(info, "X-"))
     
     app.Get("/", func(c fiber.Ctx) error {
@@ -261,6 +277,10 @@ version.RegisterEndpoint(mux, "/version", version.HandlerConfig{
 | `NewWithBranch(version, commit, buildDate, branch string) *Info` | 与 `New` 类似，同时设置分支名。 |
 | `Default() *Info` | 使用包变量（Version、Commit、BuildDate、Branch）构造信息，通常由 ldflags 在构建时注入。 |
 | `NewBuilder() *Builder` | 返回用于以流式 API 构建 `Info` 的 Builder。 |
+| `Middleware(info *Info, prefix string) func(http.Handler) http.Handler` | 为每个响应添加**公开**版本响应头（`X-Version`、`X-Branch`）。 |
+| `MiddlewareWithConfig(config HandlerConfig) func(http.Handler) http.Handler` | 同上，接受完整 `HandlerConfig`；设置 `IncludeBuildDetails` 可输出 `X-Commit` 与 `X-Build-Date`。 |
+| `FiberMiddleware(info *Info, prefix string) fiber.Handler` | `Middleware` 的 Fiber 版本。 |
+| `FiberMiddlewareWithConfig(config HandlerConfig) fiber.Handler` | `MiddlewareWithConfig` 的 Fiber 版本。 |
 
 ### Info 方法
 

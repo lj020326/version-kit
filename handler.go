@@ -214,34 +214,53 @@ func sanitizeHeaderValue(value string) string {
 	}, value)
 }
 
-// Middleware returns an http.Handler middleware that adds version headers to all responses.
+// normalizeMiddlewareConfig applies the same defaults the handlers use, so a
+// middleware reduces its payload by exactly the same rule.
+func normalizeMiddlewareConfig(cfg HandlerConfig) HandlerConfig {
+	if cfg.Info == nil {
+		cfg.Info = Default()
+	}
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
+	return cfg
+}
+
+// Middleware returns an http.Handler middleware that adds version headers to
+// all responses.
+//
+// It emits only the public fields. These headers ride on EVERY response, so a
+// middleware mounted on public routes leaks the commit and build date far more
+// widely than the /version endpoint does -- keeping the endpoint private buys
+// nothing while this one is open. MiddlewareWithConfig opts back in.
 func Middleware(info *Info, prefix string) func(http.Handler) http.Handler {
-	if info == nil {
-		info = Default()
-	}
-	if prefix == "" {
-		prefix = "X-"
-	}
+	return MiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: prefix})
+}
+
+// MiddlewareWithConfig is Middleware with the handlers' full configuration,
+// including IncludeBuildDetails for the commit and build-date headers.
+func MiddlewareWithConfig(config HandlerConfig) func(http.Handler) http.Handler {
+	cfg := normalizeMiddlewareConfig(config)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			setVersionHeaders(w.Header(), info, prefix)
+			setVersionHeaders(w.Header(), cfg.payload(), cfg.HeaderPrefix)
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// FiberMiddleware returns a Fiber middleware that adds version headers to all responses.
+// FiberMiddleware returns a Fiber middleware that adds version headers to all
+// responses. It follows the same build-detail policy as Middleware.
 func FiberMiddleware(info *Info, prefix string) fiber.Handler {
-	if info == nil {
-		info = Default()
-	}
-	if prefix == "" {
-		prefix = "X-"
-	}
+	return FiberMiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: prefix})
+}
+
+// FiberMiddlewareWithConfig is FiberMiddleware with the handlers' full
+// configuration, including IncludeBuildDetails.
+func FiberMiddlewareWithConfig(config HandlerConfig) fiber.Handler {
+	cfg := normalizeMiddlewareConfig(config)
 
 	return func(c fiber.Ctx) error {
-		setVersionHeadersFiber(c, info, prefix)
+		setVersionHeadersFiber(c, cfg.payload(), cfg.HeaderPrefix)
 		return c.Next()
 	}
 }

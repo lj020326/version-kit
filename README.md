@@ -185,12 +185,26 @@ func main() {
     
     // All responses will have:
     // X-Version: 1.0.0
-    // X-Commit: abc123
-    // X-Build-Date: 2025-01-01T00:00:00Z
+    // X-Branch:  main     (when set)
     
     http.ListenAndServe(":8080", wrapped)
 }
 ```
+
+These headers ride on **every** response, so `Middleware` emits only the
+public fields. `X-Commit` and `X-Build-Date` are an opt-in, exactly as they
+are for the handlers:
+
+```go
+wrapped := version.MiddlewareWithConfig(version.HandlerConfig{
+    Info:                info,
+    HeaderPrefix:        "X-",
+    IncludeBuildDetails: true, // adds X-Commit and X-Build-Date
+})(handler)
+```
+
+Use it on internal routes, or behind authentication: the commit and build
+date let anyone match a published CVE to the exact build serving them.
 
 For Fiber:
 
@@ -207,7 +221,10 @@ func main() {
     
     app := fiber.New()
     
-    // Add version headers to all responses
+    // Add public version headers to all responses.
+    // For X-Commit / X-Build-Date use:
+    //   version.FiberMiddlewareWithConfig(version.HandlerConfig{
+    //       Info: info, HeaderPrefix: "X-", IncludeBuildDetails: true})
     app.Use(version.FiberMiddleware(info, "X-"))
     
     app.Get("/", func(c fiber.Ctx) error {
@@ -261,6 +278,10 @@ version.RegisterEndpoint(mux, "/version", version.HandlerConfig{
 | `NewWithBranch(version, commit, buildDate, branch string) *Info` | Like `New` but also sets the branch name. |
 | `Default() *Info` | Returns info from package variables (Version, Commit, BuildDate, Branch), typically set via ldflags. |
 | `NewBuilder() *Builder` | Returns a builder for constructing `Info` with a fluent API. |
+| `Middleware(info *Info, prefix string) func(http.Handler) http.Handler` | Adds the **public** version headers (`X-Version`, `X-Branch`) to every response. |
+| `MiddlewareWithConfig(config HandlerConfig) func(http.Handler) http.Handler` | Same, with the full `HandlerConfig`; set `IncludeBuildDetails` for `X-Commit` and `X-Build-Date`. |
+| `FiberMiddleware(info *Info, prefix string) fiber.Handler` | Fiber form of `Middleware`. |
+| `FiberMiddlewareWithConfig(config HandlerConfig) fiber.Handler` | Fiber form of `MiddlewareWithConfig`. |
 
 ### Info Methods
 

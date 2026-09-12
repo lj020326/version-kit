@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/gofiber/fiber/v3"
 )
 
 // TestHandlerOmitsBuildDetailsByDefault: the version endpoint is usually
@@ -281,5 +283,87 @@ func TestDocumentedBuildDetailsExampleCompiles(t *testing.T) {
 		if _, ok := bare[field]; ok {
 			t.Errorf("field %q served by default; the READMEs promise only version and branch", field)
 		}
+	}
+}
+
+// TestMiddlewareOmitsBuildDetailsByDefault: the handlers withhold build
+// details, but these headers ride on EVERY response, so a middleware mounted
+// on public routes hands out the commit and build date far more widely than
+// the endpoint ever did -- and keeping that endpoint private buys nothing
+// while this one is open.
+func TestMiddlewareOmitsBuildDetailsByDefault(t *testing.T) {
+	info := NewWithBranch("1.0.0", "abc1234567", "2025-01-01T00:00:00Z", "main")
+
+	rec := httptest.NewRecorder()
+	Middleware(info, "X-")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
+
+	h := rec.Result().Header
+	if h.Get("X-Version") != "1.0.0" {
+		t.Errorf("X-Version = %q, want 1.0.0", h.Get("X-Version"))
+	}
+	if h.Get("X-Branch") != "main" {
+		t.Errorf("X-Branch = %q, want main", h.Get("X-Branch"))
+	}
+	if got := h.Get("X-Commit"); got != "" {
+		t.Errorf("X-Commit = %q on an ordinary response, want it withheld by default", got)
+	}
+	if got := h.Get("X-Build-Date"); got != "" {
+		t.Errorf("X-Build-Date = %q on an ordinary response, want it withheld by default", got)
+	}
+}
+
+func TestFiberMiddlewareOmitsBuildDetailsByDefault(t *testing.T) {
+	info := NewWithBranch("1.0.0", "abc1234567", "2025-01-01T00:00:00Z", "main")
+
+	app := fiber.New()
+	app.Use(FiberMiddleware(info, "X-"))
+	app.Get("/anything", func(c fiber.Ctx) error { return c.SendString("ok") })
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/anything", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("X-Commit"); got != "" {
+		t.Errorf("X-Commit = %q on an ordinary response, want it withheld by default", got)
+	}
+	if got := resp.Header.Get("X-Build-Date"); got != "" {
+		t.Errorf("X-Build-Date = %q on an ordinary response, want it withheld by default", got)
+	}
+	if resp.Header.Get("X-Version") != "1.0.0" {
+		t.Errorf("X-Version = %q, want 1.0.0", resp.Header.Get("X-Version"))
+	}
+}
+
+func TestMiddlewareWithConfigIncludesBuildDetailsWhenAsked(t *testing.T) {
+	info := NewWithBranch("1.0.0", "abc1234567", "2025-01-01T00:00:00Z", "main")
+
+	rec := httptest.NewRecorder()
+	MiddlewareWithConfig(HandlerConfig{Info: info, IncludeBuildDetails: true})(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+	).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
+
+	h := rec.Result().Header
+	if h.Get("X-Commit") != "abc1234" {
+		t.Errorf("X-Commit = %q, want the short commit", h.Get("X-Commit"))
+	}
+	if h.Get("X-Build-Date") == "" {
+		t.Error("X-Build-Date is empty, want the opt-in to restore it")
+	}
+}
+
+// TestMiddlewareNormalizesInvalidPrefix: the documented fallback applies here
+// too, so a malformed prefix cannot produce an invalid header name.
+func TestMiddlewareNormalizesInvalidPrefix(t *testing.T) {
+	info := New("1.0.0", "abc1234567", "2025-01-01T00:00:00Z")
+
+	rec := httptest.NewRecorder()
+	Middleware(info, "Bad Prefix ")(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+	).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
+
+	if rec.Result().Header.Get("X-Version") != "1.0.0" {
+		t.Errorf("an invalid prefix did not fall back to X-: %v", rec.Result().Header)
 	}
 }
