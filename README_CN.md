@@ -370,26 +370,3 @@ go tool cover -html=coverage.out
 ## 许可证
 
 Apache License 2.0
-
-### 构建详情
-
-`IncludeBuildDetails` **默认为 false**，接口只返回 `version` 与 `branch`：
-
-```json
-{"version":"1.2.3","branch":"main"}
-```
-
-该接口通常无需认证，而 `go_version` 会让任何人把已公开的 Go 运行时 CVE 精确对应到
-正在服务的构建版本，commit 与构建时间则会暴露部署指纹。若需要完整响应，请在内网接口
-或认证之后开启：
-
-```go
-version.Handler(version.HandlerConfig{
-    Info:                version.Default(),
-    IncludeBuildDetails: true,
-})
-```
-
-同一开关也控制 `X-*-Commit` 与 `X-*-Build-Date` 响应头，因此仅开启 `IncludeHeaders`
-不会暴露它们。
-
