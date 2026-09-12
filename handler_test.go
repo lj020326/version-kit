@@ -14,7 +14,7 @@ import (
 
 func TestHandler(t *testing.T) {
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
-	handler := Handler(HandlerConfig{Info: info})
+	handler := Handler(HandlerConfig{Info: info, IncludeBuildDetails: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
 	w := httptest.NewRecorder()
@@ -35,6 +35,7 @@ func TestHandler(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "1.0.0", parsed.Version)
+	// Build detail is opt-in now; see TestHandlerOmitsBuildDetailsByDefault.
 	assert.Equal(t, "abc123", parsed.Commit)
 }
 
@@ -65,9 +66,10 @@ func TestHandler_DefaultConfig(t *testing.T) {
 func TestHandler_WithHeaders(t *testing.T) {
 	info := NewWithBranch("1.0.0", "abc1234567890", "2025-01-01T00:00:00Z", "main")
 	handler := Handler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
-		HeaderPrefix:   "X-App-",
+		Info:                info,
+		IncludeHeaders:      true,
+		HeaderPrefix:        "X-App-",
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -87,9 +89,10 @@ func TestHandler_WithHeaders(t *testing.T) {
 func TestHandler_WithHeaders_SanitizesValues(t *testing.T) {
 	info := NewWithBranch("1.0.0\r\n", "abc1234567890", "2025-01-01T00:00:00Z\r\n", "main\r\n")
 	handler := Handler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
-		HeaderPrefix:   "X-App-",
+		Info:                info,
+		IncludeHeaders:      true,
+		HeaderPrefix:        "X-App-",
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -108,8 +111,9 @@ func TestHandler_WithHeaders_SanitizesValues(t *testing.T) {
 func TestHandler_Pretty(t *testing.T) {
 	info := New("1.0.0", "abc123", "")
 	handler := Handler(HandlerConfig{
-		Info:   info,
-		Pretty: true,
+		Info:                info,
+		Pretty:              true,
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -130,7 +134,7 @@ func TestHandler_Pretty(t *testing.T) {
 
 func TestTextHandler(t *testing.T) {
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
-	handler := TextHandler(HandlerConfig{Info: info})
+	handler := TextHandler(HandlerConfig{Info: info, IncludeBuildDetails: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
 	w := httptest.NewRecorder()
@@ -180,7 +184,8 @@ func TestSimpleHandler(t *testing.T) {
 
 func TestMiddleware(t *testing.T) {
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
-	middleware := Middleware(info, "X-")
+	// The commit header is the opt-in form now; Middleware alone is public-only.
+	middleware := MiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: "X-", IncludeBuildDetails: true})
 
 	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -225,7 +230,7 @@ func TestMiddleware_DefaultInfo(t *testing.T) {
 func TestRegisterEndpoint(t *testing.T) {
 	info := New("1.0.0", "abc123", "")
 	mux := http.NewServeMux()
-	RegisterEndpoint(mux, "/version", HandlerConfig{Info: info})
+	RegisterEndpoint(mux, "/version", HandlerConfig{Info: info, IncludeBuildDetails: true})
 
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -258,7 +263,7 @@ func TestFiberHandler(t *testing.T) {
 	app := fiber.New()
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
 
-	app.Get("/version", FiberHandler(HandlerConfig{Info: info}))
+	app.Get("/version", FiberHandler(HandlerConfig{Info: info, IncludeBuildDetails: true}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
 	resp, err := app.Test(req)
@@ -272,6 +277,7 @@ func TestFiberHandler(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "1.0.0", parsed.Version)
+	// Build detail is opt-in now; see TestHandlerOmitsBuildDetailsByDefault.
 	assert.Equal(t, "abc123", parsed.Commit)
 }
 
@@ -280,9 +286,10 @@ func TestFiberHandler_WithHeaders(t *testing.T) {
 	info := NewWithBranch("1.0.0", "abc1234567890", "2025-01-01T00:00:00Z", "main")
 
 	app.Get("/version", FiberHandler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
-		HeaderPrefix:   "X-",
+		Info:                info,
+		IncludeHeaders:      true,
+		HeaderPrefix:        "X-",
+		IncludeBuildDetails: true,
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -299,7 +306,7 @@ func TestFiberTextHandler(t *testing.T) {
 	app := fiber.New()
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
 
-	app.Get("/version", FiberTextHandler(HandlerConfig{Info: info}))
+	app.Get("/version", FiberTextHandler(HandlerConfig{Info: info, IncludeBuildDetails: true}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
 	resp, err := app.Test(req)
@@ -342,7 +349,7 @@ func TestFiberMiddleware(t *testing.T) {
 	app := fiber.New()
 	info := New("1.0.0", "abc123", "2025-01-01T00:00:00Z")
 
-	app.Use(FiberMiddleware(info, "X-"))
+	app.Use(FiberMiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: "X-", IncludeBuildDetails: true}))
 	app.Get("/", func(c fiber.Ctx) error {
 		return c.SendString("OK")
 	})
@@ -377,7 +384,7 @@ func TestRegisterEndpointFiber(t *testing.T) {
 	app := fiber.New()
 	info := New("1.0.0", "abc123", "")
 
-	RegisterEndpointFiber(app, "/version", HandlerConfig{Info: info})
+	RegisterEndpointFiber(app, "/version", HandlerConfig{Info: info, IncludeBuildDetails: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
 	resp, err := app.Test(req)
@@ -398,8 +405,9 @@ func TestHandler_NoCommit(t *testing.T) {
 		Version: "1.0.0",
 	}
 	handler := Handler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
+		Info:                info,
+		IncludeHeaders:      true,
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -417,9 +425,10 @@ func TestHandler_NoCommit(t *testing.T) {
 func TestHandler_NilInfoAndEmptyPrefix(t *testing.T) {
 	// Test with nil Info (should use Default) and empty HeaderPrefix (should use "X-")
 	handler := Handler(HandlerConfig{
-		Info:           nil,
-		IncludeHeaders: true,
-		HeaderPrefix:   "", // Empty prefix should default to "X-"
+		Info:                nil,
+		IncludeHeaders:      true,
+		HeaderPrefix:        "", // Empty prefix should default to "X-"
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -440,9 +449,10 @@ func TestFiberHandler_NilInfoAndEmptyPrefix(t *testing.T) {
 
 	// Test with nil Info (should use Default) and empty HeaderPrefix (should use "X-")
 	app.Get("/version", FiberHandler(HandlerConfig{
-		Info:           nil,
-		IncludeHeaders: true,
-		HeaderPrefix:   "", // Empty prefix should default to "X-"
+		Info:                nil,
+		IncludeHeaders:      true,
+		HeaderPrefix:        "", // Empty prefix should default to "X-"
+		IncludeBuildDetails: true,
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -479,8 +489,9 @@ func TestFiberHandler_Pretty(t *testing.T) {
 	info := New("1.0.0", "abc123", "")
 
 	app.Get("/version", FiberHandler(HandlerConfig{
-		Info:   info,
-		Pretty: true,
+		Info:                info,
+		Pretty:              true,
+		IncludeBuildDetails: true,
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -521,9 +532,10 @@ func TestTextHandler_DefaultConfig(t *testing.T) {
 func TestTextHandler_WithHeaders(t *testing.T) {
 	info := NewWithBranch("1.0.0", "abc1234567890", "2025-01-01T00:00:00Z", "main")
 	handler := TextHandler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
-		HeaderPrefix:   "X-App-",
+		Info:                info,
+		IncludeHeaders:      true,
+		HeaderPrefix:        "X-App-",
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -541,7 +553,8 @@ func TestTextHandler_WithHeaders(t *testing.T) {
 
 func TestTextHandler_NilInfo(t *testing.T) {
 	handler := TextHandler(HandlerConfig{
-		Info: nil, // Should use Default()
+		Info:                nil, // Should use Default()
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -584,9 +597,10 @@ func TestFiberTextHandler_WithHeaders(t *testing.T) {
 	info := NewWithBranch("1.0.0", "abc1234567890", "2025-01-01T00:00:00Z", "main")
 
 	app.Get("/version", FiberTextHandler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
-		HeaderPrefix:   "X-App-",
+		Info:                info,
+		IncludeHeaders:      true,
+		HeaderPrefix:        "X-App-",
+		IncludeBuildDetails: true,
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -602,7 +616,8 @@ func TestFiberTextHandler_WithHeaders(t *testing.T) {
 func TestFiberTextHandler_NilInfo(t *testing.T) {
 	app := fiber.New()
 	app.Get("/version", FiberTextHandler(HandlerConfig{
-		Info: nil, // Should use Default()
+		Info:                nil, // Should use Default()
+		IncludeBuildDetails: true,
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -626,8 +641,9 @@ func TestSetVersionHeaders_UnknownCommit(t *testing.T) {
 		BuildDate: "unknown",
 	}
 	handler := Handler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
+		Info:                info,
+		IncludeHeaders:      true,
+		IncludeBuildDetails: true,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
@@ -652,8 +668,9 @@ func TestSetVersionHeadersFiber_UnknownCommit(t *testing.T) {
 	}
 
 	app.Get("/version", FiberHandler(HandlerConfig{
-		Info:           info,
-		IncludeHeaders: true,
+		Info:                info,
+		IncludeHeaders:      true,
+		IncludeBuildDetails: true,
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)

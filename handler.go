@@ -24,7 +24,64 @@ type HandlerConfig struct {
 
 	// HeaderPrefix is the prefix for version headers.
 	// Default: "X-"
+	//
+	// An invalid prefix (one containing characters that cannot appear in an
+	// HTTP header name) falls back to "X-" rather than emitting a malformed
+	// header name.
 	HeaderPrefix string
+
+	// IncludeBuildDetails serves the full Info -- Go runtime version, commit,
+	// build date, platform and compiler.
+	//
+	// Default: false. This endpoint is usually unauthenticated, and
+	// go_version lets anyone match a published Go runtime CVE to the exact
+	// build serving them. Turn it on for an internal endpoint, or behind
+	// authentication.
+	IncludeBuildDetails bool
+}
+
+// validHeaderPrefix reports whether prefix can appear in an HTTP header name.
+//
+// A field name is a token (RFC 9110 5.6.2), so every tchar is allowed here --
+// not just the alphanumeric/dash subset. Prefixes such as "X.App-" were valid
+// before this validator existed and must keep working.
+func validHeaderPrefix(prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	for _, r := range prefix {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", r):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeHeaderPrefix falls back to "X-" for a prefix that is not a token.
+func normalizeHeaderPrefix(prefix string) string {
+	if validHeaderPrefix(prefix) {
+		return prefix
+	}
+	return "X-"
+}
+
+// payload returns the Info to serve, reduced unless build details were asked for.
+func (c HandlerConfig) payload() *Info {
+	if c.IncludeBuildDetails {
+		return c.Info
+	}
+	return c.Info.Public()
+}
+
+// textPayload is payload rendered for the plain-text handlers.
+func (c HandlerConfig) textPayload() string {
+	if c.IncludeBuildDetails {
+		return c.Info.Full()
+	}
+	return c.Info.Public().Full()
 }
 
 // DefaultHandlerConfig returns a HandlerConfig with default values.
@@ -48,24 +105,22 @@ func Handler(config ...HandlerConfig) http.HandlerFunc {
 		cfg.Info = Default()
 	}
 
-	if cfg.HeaderPrefix == "" {
-		cfg.HeaderPrefix = "X-"
-	}
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if cfg.IncludeHeaders {
-			setVersionHeaders(w.Header(), cfg.Info, cfg.HeaderPrefix)
+			setVersionHeaders(w.Header(), cfg.payload(), cfg.HeaderPrefix)
 		}
 
 		var output []byte
 		var err error
 
 		if cfg.Pretty {
-			output, err = json.MarshalIndent(cfg.Info, "", "  ")
+			output, err = json.MarshalIndent(cfg.payload(), "", "  ")
 		} else {
-			output, err = json.Marshal(cfg.Info)
+			output, err = json.Marshal(cfg.payload())
 		}
 
 		if err != nil {
@@ -89,22 +144,20 @@ func FiberHandler(config ...HandlerConfig) fiber.Handler {
 		cfg.Info = Default()
 	}
 
-	if cfg.HeaderPrefix == "" {
-		cfg.HeaderPrefix = "X-"
-	}
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
 
 	return func(c fiber.Ctx) error {
 		c.Set("Content-Type", "application/json")
 
 		if cfg.IncludeHeaders {
-			setVersionHeadersFiber(c, cfg.Info, cfg.HeaderPrefix)
+			setVersionHeadersFiber(c, cfg.payload(), cfg.HeaderPrefix)
 		}
 
 		if cfg.Pretty {
-			return c.JSON(cfg.Info)
+			return c.JSON(cfg.payload())
 		}
 
-		return c.JSON(cfg.Info)
+		return c.JSON(cfg.payload())
 	}
 }
 
@@ -161,34 +214,53 @@ func sanitizeHeaderValue(value string) string {
 	}, value)
 }
 
-// Middleware returns an http.Handler middleware that adds version headers to all responses.
+// normalizeMiddlewareConfig applies the same defaults the handlers use, so a
+// middleware reduces its payload by exactly the same rule.
+func normalizeMiddlewareConfig(cfg HandlerConfig) HandlerConfig {
+	if cfg.Info == nil {
+		cfg.Info = Default()
+	}
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
+	return cfg
+}
+
+// Middleware returns an http.Handler middleware that adds version headers to
+// all responses.
+//
+// It emits only the public fields. These headers ride on EVERY response, so a
+// middleware mounted on public routes leaks the commit and build date far more
+// widely than the /version endpoint does -- keeping the endpoint private buys
+// nothing while this one is open. MiddlewareWithConfig opts back in.
 func Middleware(info *Info, prefix string) func(http.Handler) http.Handler {
-	if info == nil {
-		info = Default()
-	}
-	if prefix == "" {
-		prefix = "X-"
-	}
+	return MiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: prefix})
+}
+
+// MiddlewareWithConfig is Middleware with the handlers' full configuration,
+// including IncludeBuildDetails for the commit and build-date headers.
+func MiddlewareWithConfig(config HandlerConfig) func(http.Handler) http.Handler {
+	cfg := normalizeMiddlewareConfig(config)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			setVersionHeaders(w.Header(), info, prefix)
+			setVersionHeaders(w.Header(), cfg.payload(), cfg.HeaderPrefix)
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// FiberMiddleware returns a Fiber middleware that adds version headers to all responses.
+// FiberMiddleware returns a Fiber middleware that adds version headers to all
+// responses. It follows the same build-detail policy as Middleware.
 func FiberMiddleware(info *Info, prefix string) fiber.Handler {
-	if info == nil {
-		info = Default()
-	}
-	if prefix == "" {
-		prefix = "X-"
-	}
+	return FiberMiddlewareWithConfig(HandlerConfig{Info: info, HeaderPrefix: prefix})
+}
+
+// FiberMiddlewareWithConfig is FiberMiddleware with the handlers' full
+// configuration, including IncludeBuildDetails.
+func FiberMiddlewareWithConfig(config HandlerConfig) fiber.Handler {
+	cfg := normalizeMiddlewareConfig(config)
 
 	return func(c fiber.Ctx) error {
-		setVersionHeadersFiber(c, info, prefix)
+		setVersionHeadersFiber(c, cfg.payload(), cfg.HeaderPrefix)
 		return c.Next()
 	}
 }
@@ -204,15 +276,17 @@ func TextHandler(config ...HandlerConfig) http.HandlerFunc {
 		cfg.Info = Default()
 	}
 
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 		if cfg.IncludeHeaders {
-			setVersionHeaders(w.Header(), cfg.Info, cfg.HeaderPrefix)
+			setVersionHeaders(w.Header(), cfg.payload(), cfg.HeaderPrefix)
 		}
 
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(cfg.Info.Full()))
+		_, _ = w.Write([]byte(cfg.textPayload()))
 	}
 }
 
@@ -227,14 +301,16 @@ func FiberTextHandler(config ...HandlerConfig) fiber.Handler {
 		cfg.Info = Default()
 	}
 
+	cfg.HeaderPrefix = normalizeHeaderPrefix(cfg.HeaderPrefix)
+
 	return func(c fiber.Ctx) error {
 		c.Set("Content-Type", "text/plain; charset=utf-8")
 
 		if cfg.IncludeHeaders {
-			setVersionHeadersFiber(c, cfg.Info, cfg.HeaderPrefix)
+			setVersionHeadersFiber(c, cfg.payload(), cfg.HeaderPrefix)
 		}
 
-		return c.SendString(cfg.Info.Full())
+		return c.SendString(cfg.textPayload())
 	}
 }
 
