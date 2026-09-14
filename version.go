@@ -11,7 +11,7 @@ import (
 )
 
 // Default version variables - can be overridden via ldflags during build.
-// Example: go build -ldflags "-X github.com/soulteary/version-kit/v2.Version=1.0.0"
+// Example: go build -ldflags "-X github.com/lj020326/version-kit/v2.Version=1.0.0"
 var (
 	// Version is the application version number
 	Version = "dev"
